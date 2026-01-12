@@ -3,6 +3,26 @@ use std::io::{self, Write};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
+use std::env;
+use std::path::Path;
+
+enum BuiltinCommand {
+    Echo(String),
+    Type(String),
+    Exit,
+    External(String, Vec<String>),
+    Pwd,
+    Cd(String),
+}
+
+// Built-in command names
+const CMD_ECHO: &str = "echo";
+const CMD_TYPE: &str = "type";
+const CMD_EXIT: &str = "exit";
+const CMD_PWD: &str = "pwd";
+const CMD_CD: &str = "cd";
+
+const PROMPT: &str = "$ ";
 
 fn find_executable(cmd: &str) -> Option<std::path::PathBuf> {
     if let Some(path_env) = std::env::var_os("PATH") {
@@ -34,10 +54,155 @@ fn is_executable(path: &std::path::Path) -> bool {
     false
 }
 
-fn main() {
+fn parse_arguments(args: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut chars = args.chars().peekable();
+    let mut in_single_quotes = false;
+    
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                in_single_quotes = !in_single_quotes;
+                continue;
+            }
+            ' ' if !in_single_quotes => {
+                if !current.is_empty() {
+                    result.push(current.clone());
+                    current.clear();
+                }
+            }
+            _ => {
+                current.push(c);
+            }
+        }
+    }
+    if !current.is_empty() {
+        result.push(current);
+    }
+    result
+}
+
+fn parse_command(input: &str) -> Option<BuiltinCommand> {
+    let trimmed = input.trim();
+    
+    if trimmed.is_empty() {
+        return None;
+    }
+    
+    if trimmed == CMD_EXIT {
+        return Some(BuiltinCommand::Exit);
+    }
+    
+    if trimmed.starts_with(&format!("{} ", CMD_ECHO)) {
+        let args = &trimmed[CMD_ECHO.len() + 1..];
+        let parsed_args = parse_arguments(args);
+        let message = parsed_args.join(" ");
+        return Some(BuiltinCommand::Echo(message));
+    }
+    
+    if trimmed.starts_with(&format!("{} ", CMD_TYPE)) {
+        let arg = trimmed[CMD_TYPE.len() + 1..].to_string();
+        return Some(BuiltinCommand::Type(arg));
+    }
+
+    if trimmed == CMD_PWD {
+        return Some(BuiltinCommand::Pwd);
+    }
+
+    if trimmed.starts_with(&format!("{} ", CMD_CD)) {
+        let arg = trimmed[CMD_CD.len() + 1..].to_string();
+        return Some(BuiltinCommand::Cd(arg));
+    }
+
+    // Parse external command
+    let parts = parse_arguments(trimmed);
+    if !parts.is_empty() {
+        let cmd = parts[0].clone();
+        let args = parts[1..].to_vec();
+        return Some(BuiltinCommand::External(cmd, args));
+    }
+    None
+}
+
+fn cmd_echo(message: &str) {
+    println!("{}", message);
+}
+
+fn cmd_type(arg: &str) -> bool {
+    if arg == CMD_ECHO || arg == CMD_EXIT || arg == CMD_TYPE || arg == CMD_PWD || arg == CMD_CD {
+        println!("{} is a shell builtin", arg);
+        true
+    } else if let Some(path) = find_executable(arg) {
+        println!("{} is {}", arg, path.display());
+        true
+    } else {
+        println!("{}: not found", arg);
+        false
+    }
+}
+
+fn execute_external_command(cmd: &str, args: &[String]) -> bool {
+    if let Some(_exec_path) = find_executable(cmd) {
+        match Command::new(cmd).args(args).status() {
+            Ok(_status) => true,
+            Err(e) => {
+                eprintln!("Failed to execute {}: {}", cmd, e);
+                false
+            }
+        }
+    } else {
+        println!("{}: command not found", cmd);
+        false
+    }
+}
+
+fn execute_command(cmd: BuiltinCommand) -> bool {
+    match cmd {
+        BuiltinCommand::Echo(message) => {
+            cmd_echo(&message);
+            true
+        }
+        BuiltinCommand::Type(arg) => cmd_type(&arg),
+        BuiltinCommand::Exit => false, // Signal to exit
+        BuiltinCommand::External(cmd_name, args) => execute_external_command(&cmd_name, &args),
+        BuiltinCommand::Pwd => {
+            cmd_pwd();
+            true
+        }
+        BuiltinCommand::Cd(arg) => {
+            cmd_cd(&arg);
+            true
+        }
+    }
+}
+
+fn cmd_pwd() {
+    if let Ok(pwd) = env::current_dir() {
+        println!("{}", pwd.display());
+    } else {
+        eprintln!("Failed to get current directory");
+    }
+}
+
+fn cmd_cd(arg: &str) {
+    let path = Path::new(arg);
+    if path == "~" {
+        if let Some(home) = env::home_dir() {
+            env::set_current_dir(home).unwrap();
+        }
+    } else if path.exists() {
+        if let Err(e) = env::set_current_dir(&path) {
+            eprintln!("cd {}: {}", arg, e);
+        }
+    } else {
+        eprintln!("cd: {}: No such file or directory", arg);
+    }
+}
+
+fn run_repl() {
     loop {
-        // Print the prompt
-        print!("$ ");
+        print!("{}", PROMPT);
         io::stdout().flush().unwrap();
 
         // Read the command from the user
@@ -46,55 +211,19 @@ fn main() {
             break;
         }
 
-        // Trim whitespace and check for empty input
-        let trimmed = command.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        // Handle exit command
-        if trimmed == "exit" {
-            break;
-        }
-
-        // Handle echo command
-        if trimmed.starts_with("echo ") {
-            let message = &trimmed[5..];
-            println!("{}", message);
-            continue;
-        }
-
-        // Handle type command
-        if trimmed.starts_with("type ") {
-            let arg = &trimmed[5..];
-            if arg == "echo" || arg == "exit" || arg == "type" {
-                println!("{} is a shell builtin", arg);
-            } else {
-                if let Some(path) = find_executable(arg) {
-                    println!("{} is {}", arg, path.display());
-                } else {
-                    println!("{}: not found", arg);
+        // Parse the command
+        if let Some(cmd) = parse_command(&command) {
+            // Execute the command and check for exit
+            match cmd {
+                BuiltinCommand::Exit => break,
+                other => {
+                    execute_command(other);
                 }
             }
-            continue;
-        }
-
-        // Else, get the command and arguments
-        let mut parts = trimmed.split_whitespace();
-        let cmd = parts.next().unwrap();
-        let args = parts.collect::<Vec<&str>>();
-
-        // Execute the command
-        if let Some(_exec_path) = find_executable(cmd) {
-            let status = Command::new(cmd)
-                .args(&args)
-                .status();
-            match status {
-                Ok(_status) => {}, // Optionally handle exit code
-                Err(e) => eprintln!("Failed to execute {}: {}", cmd, e),
-            }
-        } else {
-            println!("{}: command not found", trimmed);
         }
     }
+}
+
+fn main() {
+    run_repl();
 }
