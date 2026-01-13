@@ -5,6 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::env;
 use std::path::Path;
+//use std::time::Instant;
 
 enum BuiltinCommand {
     Echo(String),
@@ -59,18 +60,39 @@ fn parse_arguments(args: &str) -> Vec<String> {
     let mut current = String::new();
     let mut chars = args.chars().peekable();
     let mut in_single_quotes = false;
-    
+    let mut in_double_quotes = false;
+
     while let Some(c) = chars.next() {
         match c {
             '\'' => {
-                in_single_quotes = !in_single_quotes;
+                if in_double_quotes {
+                    current.push(c);
+                } else {
+                    in_single_quotes = !in_single_quotes;
+                }
                 continue;
             }
-            ' ' if !in_single_quotes => {
+            '"' => {
+                if in_single_quotes {
+                    current.push(c);
+                } else {
+                    in_double_quotes = !in_double_quotes;
+                }
+                continue;
+            }
+            ' ' if !in_single_quotes && !in_double_quotes => {
                 if !current.is_empty() {
                     result.push(current.clone());
                     current.clear();
                 }
+            }
+            '\\' if !(in_single_quotes || in_double_quotes) => {
+                if let Some(next_c) = chars.next() {
+                    current.push(next_c);
+                } else {
+                    current.push(c);
+                }
+                continue;
             }
             _ => {
                 current.push(c);
@@ -217,7 +239,10 @@ fn run_repl() {
             match cmd {
                 BuiltinCommand::Exit => break,
                 other => {
+                    //let now = Instant::now();
                     execute_command(other);
+                    //let elapsed = now.elapsed();
+                    //println!("Command executed in {:.5}s", elapsed.as_secs_f64());
                 }
             }
         }
