@@ -86,13 +86,25 @@ fn parse_arguments(args: &str) -> Vec<String> {
                     current.clear();
                 }
             }
-            '\\' if !(in_single_quotes || in_double_quotes) => {
-                if let Some(next_c) = chars.next() {
-                    current.push(next_c);
-                } else {
+            '\\' => {
+                if in_single_quotes {
                     current.push(c);
+                } else if in_double_quotes {
+                    if let Some(&next_c) = chars.peek() {
+                        if next_c == '"' || next_c == '\\' {
+                            chars.next();
+                            current.push(next_c);
+                        } else {
+                            current.push(c);
+                        }
+                    } else {
+                        current.push(c);
+                    }
+                } else {
+                    if let Some(next_c) = chars.next() {
+                        current.push(next_c);
+                    }
                 }
-                continue;
             }
             _ => {
                 current.push(c);
