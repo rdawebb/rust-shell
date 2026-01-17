@@ -3,17 +3,22 @@ use std::io::{self, Write};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
+use std::process::Stdio;
 use std::env;
 use std::path::Path;
-//use std::time::Instant;
 
 enum BuiltinCommand {
-    Echo(String),
-    Type(String),
+    Echo(String, Option<String>, Option<String>),
+    Type(String, Option<String>, Option<String>),
     Exit,
-    External(String, Vec<String>),
-    Pwd,
-    Cd(String),
+    External(String, Vec<String>, Option<String>, Option<String>),
+    Pwd(Option<String>, Option<String>),
+    Cd(String, Option<String>, Option<String>),
+}
+
+enum ShellStream {
+    Stdout,
+    Stderr,
 }
 
 // Built-in command names
@@ -24,6 +29,31 @@ const CMD_PWD: &str = "pwd";
 const CMD_CD: &str = "cd";
 
 const PROMPT: &str = "$ ";
+
+
+fn shell_write(file: &Option<String>, msg: &str, stream: ShellStream) {
+    if let Some(path) = file {
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(path) {
+            let _ = writeln!(f, "{}", msg);
+        }
+    } else {
+        match stream {
+            ShellStream::Stdout => println!("{}", msg),
+            ShellStream::Stderr => eprintln!("{}", msg),
+        }
+    }
+}
+
+fn strip_outer_quotes(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 {
+        if (bytes[0] == b'\'' && bytes[bytes.len()-1] == b'\'') ||
+           (bytes[0] == b'"' && bytes[bytes.len()-1] == b'"') {
+            return &s[1..s.len()-1];
+        }
+    }
+    s
+}
 
 fn find_executable(cmd: &str) -> Option<std::path::PathBuf> {
     if let Some(path_env) = std::env::var_os("PATH") {
@@ -53,6 +83,32 @@ fn is_executable(path: &std::path::Path) -> bool {
         return permissions.mode() & 0o111 != 0;
     }
     false
+}
+
+fn split_redirection(input: &str) -> (Vec<String>, Option<String>, Option<String>) {
+    let tokens = parse_arguments(input);
+    let mut out_file = None;
+    let mut err_file = None;
+    let mut cmd_tokens = Vec::new();
+    let mut i = 0;
+
+    while i < tokens.len() {
+        if tokens[i] == ">" || tokens[i] == "1>" {
+            if i + 1 < tokens.len() {
+                out_file = Some(tokens[i + 1].clone());
+            }
+            break; // No filename provided, ignore
+        } else if tokens[i] == "2>" {
+            if i + 1 < tokens.len() {
+                err_file = Some(tokens[i + 1].clone());
+            }
+            break; // No filename provided, ignore
+        } else {
+            cmd_tokens.push(tokens[i].clone());
+        }
+        i += 1;
+    }
+    (cmd_tokens, out_file, err_file)
 }
 
 fn parse_arguments(args: &str) -> Vec<String> {
@@ -119,118 +175,201 @@ fn parse_arguments(args: &str) -> Vec<String> {
 
 fn parse_command(input: &str) -> Option<BuiltinCommand> {
     let trimmed = input.trim();
-    
-    if trimmed.is_empty() {
+    let (cmd_tokens, out_file, err_file) = split_redirection(trimmed);
+
+    if cmd_tokens.is_empty() {
         return None;
     }
-    
+
     if trimmed == CMD_EXIT {
         return Some(BuiltinCommand::Exit);
     }
     
-    if trimmed.starts_with(&format!("{} ", CMD_ECHO)) {
-        let args = &trimmed[CMD_ECHO.len() + 1..];
-        let parsed_args = parse_arguments(args);
-        let message = parsed_args.join(" ");
-        return Some(BuiltinCommand::Echo(message));
+    if cmd_tokens.len() > 0 && cmd_tokens[0] == CMD_ECHO {
+        let message = cmd_tokens[1..].join(" ");
+        return Some(BuiltinCommand::Echo(message, out_file, err_file));
     }
     
-    if trimmed.starts_with(&format!("{} ", CMD_TYPE)) {
-        let arg = trimmed[CMD_TYPE.len() + 1..].to_string();
-        return Some(BuiltinCommand::Type(arg));
+    if cmd_tokens.len() > 1 && cmd_tokens[0] == CMD_TYPE {
+        let arg = cmd_tokens[1].clone();
+        return Some(BuiltinCommand::Type(arg, out_file, err_file));
     }
 
     if trimmed == CMD_PWD {
-        return Some(BuiltinCommand::Pwd);
+        return Some(BuiltinCommand::Pwd(out_file, err_file));
     }
 
-    if trimmed.starts_with(&format!("{} ", CMD_CD)) {
-        let arg = trimmed[CMD_CD.len() + 1..].to_string();
-        return Some(BuiltinCommand::Cd(arg));
+    if cmd_tokens.len() > 1 && cmd_tokens[0] == CMD_CD {
+        let arg = cmd_tokens[1].clone();
+        return Some(BuiltinCommand::Cd(arg, out_file, err_file));
     }
 
     // Parse external command
-    let parts = parse_arguments(trimmed);
-    if !parts.is_empty() {
-        let cmd = parts[0].clone();
-        let args = parts[1..].to_vec();
-        return Some(BuiltinCommand::External(cmd, args));
+    let cmd = strip_outer_quotes(&cmd_tokens[0]).to_string();
+    let args = cmd_tokens[1..].iter().map(|a| strip_outer_quotes(a).to_string()).collect::<Vec<_>>();
+    Some(BuiltinCommand::External(cmd, args, out_file, err_file))
+}
+
+fn cmd_echo(message: &str, out_file: &Option<String>, err_file: &Option<String>) {
+    if let Some(file) = out_file {
+        let _ = std::fs::File::create(file.trim());
     }
-    None
+    if let Some(file) = err_file {
+        let _ = std::fs::File::create(file.trim());
+    }
+    
+    if let Some(file) = out_file {
+        let file = file.trim();
+        if let Some(parent) = std::path::Path::new(file).parent() {
+            if !parent.exists() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    shell_write(&err_file, &format!("Failed to create directory {}: {}", parent.display(), e), ShellStream::Stderr);
+                }
+            }
+        }
+        if let Ok(mut f) = std::fs::File::create(file) {
+            let _ = writeln!(f, "{}", message);
+        } else {
+            shell_write(&err_file, &format!("Failed to write to file: {}", file), ShellStream::Stderr);
+        }
+    } else {
+        shell_write(&out_file, &message, ShellStream::Stdout);
+    }
 }
 
-fn cmd_echo(message: &str) {
-    println!("{}", message);
-}
+fn cmd_type(arg: &str, out_file: &Option<String>, err_file: &Option<String>) -> bool {
+    if let Some(file) = out_file {
+        let _ = std::fs::File::create(file.trim());
+    }
+    if let Some(file) = err_file {
+        let _ = std::fs::File::create(file.trim());
+    }
 
-fn cmd_type(arg: &str) -> bool {
     if arg == CMD_ECHO || arg == CMD_EXIT || arg == CMD_TYPE || arg == CMD_PWD || arg == CMD_CD {
-        println!("{} is a shell builtin", arg);
+        shell_write(&out_file, &format!("{} is a shell builtin", arg), ShellStream::Stdout);
         true
     } else if let Some(path) = find_executable(arg) {
-        println!("{} is {}", arg, path.display());
+        shell_write(&out_file, &format!("{} is {}", arg, path.display()), ShellStream::Stdout);
         true
     } else {
-        println!("{}: not found", arg);
+        shell_write(&err_file, &format!("{}: not found", arg), ShellStream::Stderr);
         false
     }
 }
 
-fn execute_external_command(cmd: &str, args: &[String]) -> bool {
+fn execute_external_command(cmd: &str, args: &[String], out_file: &Option<String>, err_file: &Option<String>) -> bool {
     if let Some(_exec_path) = find_executable(cmd) {
-        match Command::new(cmd).args(args).status() {
+        let mut command = Command::new(cmd);
+        command.args(args);
+
+        if let Some(file) = out_file {
+            let file = file.trim();
+            let path = std::path::Path::new(file);
+            if let Some(parent) = path.parent() {
+                if !parent.exists() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        shell_write(&err_file, &format!("Failed to create directory {}: {}", parent.display(), e), ShellStream::Stderr);
+                    }
+                }
+            }
+            match std::fs::File::create(file) {
+                Ok(f) => {
+                    command.stdout(Stdio::from(f));
+                }
+                Err(e) => {
+                    shell_write(&err_file, &format!("Failed to open file: {} {}", file, e), ShellStream::Stderr);
+                    return false;
+                }
+            }
+        }
+        if let Some(file) = err_file {
+            let file = file.trim();
+            let path = std::path::Path::new(file);
+            if let Some(parent) = path.parent() {
+                if !parent.exists() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        shell_write(&err_file, &format!("Failed to create directory {}: {}", parent.display(), e), ShellStream::Stderr);
+                    }
+                }
+            }
+            match std::fs::File::create(file) {
+                Ok(f) => {
+                    command.stderr(Stdio::from(f));
+                }
+                Err(e) => {
+                    shell_write(&err_file, &format!("Failed to open file: {} {}", file, e), ShellStream::Stderr);
+                    return false;
+                }
+            }
+        }
+        match command.status() {
             Ok(_status) => true,
             Err(e) => {
-                eprintln!("Failed to execute {}: {}", cmd, e);
+                shell_write(&err_file, &format!("Failed to execute {}: {}", cmd, e), ShellStream::Stderr);
                 false
             }
         }
     } else {
-        println!("{}: command not found", cmd);
+        shell_write(&err_file, &format!("{}: command not found", cmd), ShellStream::Stderr);
         false
     }
 }
 
 fn execute_command(cmd: BuiltinCommand) -> bool {
     match cmd {
-        BuiltinCommand::Echo(message) => {
-            cmd_echo(&message);
+        BuiltinCommand::Echo(message, out_file, err_file) => {
+            cmd_echo(&message, &out_file, &err_file);
             true
         }
-        BuiltinCommand::Type(arg) => cmd_type(&arg),
+        BuiltinCommand::Type(arg, out_file, err_file) => cmd_type(&arg, &out_file, &err_file),
         BuiltinCommand::Exit => false, // Signal to exit
-        BuiltinCommand::External(cmd_name, args) => execute_external_command(&cmd_name, &args),
-        BuiltinCommand::Pwd => {
-            cmd_pwd();
+        BuiltinCommand::External(cmd_name, args, out_file, err_file) => execute_external_command(&cmd_name, &args, &out_file, &err_file),
+        BuiltinCommand::Pwd(out_file, err_file) => {
+            cmd_pwd(&out_file, &err_file);
             true
         }
-        BuiltinCommand::Cd(arg) => {
-            cmd_cd(&arg);
+        BuiltinCommand::Cd(arg, _out_file, err_file) => {
+            cmd_cd(&arg, &err_file);
             true
         }
     }
 }
 
-fn cmd_pwd() {
+fn cmd_pwd(out_file: &Option<String>, err_file: &Option<String>) {
+    if let Some(file) = out_file {
+        let _ = std::fs::File::create(file.trim());
+    }
+    if let Some(file) = err_file {
+        let _ = std::fs::File::create(file.trim());
+    }
+
     if let Ok(pwd) = env::current_dir() {
-        println!("{}", pwd.display());
+        shell_write(&out_file, &format!("{}", pwd.display()), ShellStream::Stdout);
     } else {
-        eprintln!("Failed to get current directory");
+        shell_write(&err_file, "Failed to get current directory", ShellStream::Stderr);
     }
 }
 
-fn cmd_cd(arg: &str) {
+fn cmd_cd(arg: &str, err_file: &Option<String>) {
+    if let Some(file) = err_file {
+        let _ = std::fs::File::create(file.trim());
+    }
+
     let path = Path::new(arg);
-    if path == "~" {
-        if let Some(home) = env::home_dir() {
-            env::set_current_dir(home).unwrap();
+    if arg == "~" {
+        if let Ok(home) = std::env::var("HOME") {
+            if let Err(e) = env::set_current_dir(&home) {
+                shell_write(&err_file, &format!("cd {}: {}", arg, e), ShellStream::Stderr);
+            }
+        } else {
+            shell_write(&err_file, "cd: HOME not set", ShellStream::Stderr);
         }
     } else if path.exists() {
         if let Err(e) = env::set_current_dir(&path) {
-            eprintln!("cd {}: {}", arg, e);
+            shell_write(&err_file, &format!("cd {}: {}", arg, e), ShellStream::Stderr);
         }
     } else {
-        eprintln!("cd: {}: No such file or directory", arg);
+        shell_write(&err_file, &format!("cd: {}: No such file or directory", arg), ShellStream::Stderr);
     }
 }
 
