@@ -7,4 +7,10 @@ rust-version = "1.92"
 
 [dependencies]
 dirs = ">=5.0"
-rustyline = ">=17.0.0, <18.0.0"
+rustyline = ">=17.0.0, <19.0.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true

@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use rustyline::Editor;
 use rustyline::config::Configurer;
 use rustyline::error::ReadlineError;
-use rustyline::Editor;
 use rustyline::history::FileHistory;
 
 mod commands;
-mod parser;
-mod io_handler;
 mod completion;
+mod io_handler;
+mod parser;
 
 use completion::ShellCompleter;
 use io_handler::IoContext;
@@ -24,11 +24,10 @@ fn run_repl() -> rustyline::Result<()> {
     rl.set_helper(Some(ShellCompleter::new()));
     rl.set_bell_style(rustyline::config::BellStyle::Audible);
 
-    let history_file: Option<PathBuf> = dirs::home_dir()
-        .map(|mut path| {
-            path.push(".shell_history");
-            path
-        });
+    let history_file: Option<PathBuf> = dirs::home_dir().map(|mut path| {
+        path.push(".shell_history");
+        path
+    });
 
     if let Some(ref path) = history_file {
         let _ = rl.load_history(path);
@@ -46,15 +45,15 @@ fn run_repl() -> rustyline::Result<()> {
                         if command.is_exit() {
                             break;
                         }
-                        
+
                         match IoContext::new(command.redirects()) {
                             Ok(io_ctx) => {
                                 let start = Instant::now();
                                 let result = command.execute(io_ctx);
                                 let duration = start.elapsed();
-                                
+
                                 println!("Command executed in {:.5} s", duration.as_secs_f64());
-                                
+
                                 if let Err(e) = result {
                                     eprintln!("Error: {}", e);
                                 }
@@ -83,7 +82,7 @@ fn run_repl() -> rustyline::Result<()> {
     if let Some(path) = history_file {
         let _ = rl.save_history(&path);
     }
-    
+
     Ok(())
 }
 

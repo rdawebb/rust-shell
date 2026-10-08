@@ -1,5 +1,5 @@
 use crate::commands::Command;
-use crate::io_handler::{Redirects, RedirectMode};
+use crate::io_handler::{RedirectMode, Redirects};
 use std::io;
 
 pub struct Parser;
@@ -8,19 +8,19 @@ impl Parser {
     pub fn new() -> Self {
         Self
     }
-    
+
     pub fn parse(&self, input: &str) -> io::Result<Option<Command>> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
             return Ok(None);
         }
-        
+
         let (tokens, redirects) = parse_with_redirects(trimmed);
-        
+
         if tokens.is_empty() {
             return Ok(None);
         }
-        
+
         Command::from_tokens(tokens, redirects)
     }
 }
@@ -31,7 +31,7 @@ fn parse_with_redirects(input: &str) -> (Vec<String>, Redirects) {
     let mut redirects = Redirects::new();
     let mut cmd_tokens = Vec::new();
     let mut i = 0;
-    
+
     while i < tokens.len() {
         match tokens[i].as_str() {
             ">" | "1>" if i + 1 < tokens.len() => {
@@ -56,7 +56,7 @@ fn parse_with_redirects(input: &str) -> (Vec<String>, Redirects) {
             }
         }
     }
-    
+
     (cmd_tokens, redirects)
 }
 
@@ -66,7 +66,7 @@ fn tokenize(input: &str) -> Vec<String> {
     let mut chars = input.chars().peekable();
     let mut in_single_quotes = false;
     let mut in_double_quotes = false;
-    
+
     while let Some(c) = chars.next() {
         match c {
             '\'' if !in_double_quotes => {
@@ -81,7 +81,6 @@ fn tokenize(input: &str) -> Vec<String> {
                 if !current.is_empty() {
                     result.push(current.clone());
                     current.clear();
-                
                 }
                 let mut op = String::from(">");
                 if chars.peek() == Some(&'>') {
@@ -143,9 +142,10 @@ fn tokenize(input: &str) -> Vec<String> {
 pub fn strip_quotes(s: &str) -> &str {
     let bytes = s.as_bytes();
     if bytes.len() >= 2 {
-        if (bytes[0] == b'\'' && bytes[bytes.len()-1] == b'\'') ||
-           (bytes[0] == b'"' && bytes[bytes.len()-1] == b'"') {
-            return &s[1..s.len()-1];
+        if (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'')
+            || (bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
+        {
+            return &s[1..s.len() - 1];
         }
     }
     s
@@ -154,64 +154,85 @@ pub fn strip_quotes(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_tokenize_simple() {
         assert_eq!(tokenize("echo hello world"), vec!["echo", "hello", "world"]);
     }
-    
+
     #[test]
     fn test_tokenize_quotes() {
-        assert_eq!(tokenize(r#"echo "hello world""#), vec!["echo", "hello world"]);
+        assert_eq!(
+            tokenize(r#"echo "hello world""#),
+            vec!["echo", "hello world"]
+        );
     }
-    
+
     #[test]
     fn test_tokenize_escaped() {
         assert_eq!(tokenize(r#"echo \"hello\""#), vec!["echo", "\"hello\""]);
     }
-    
+
     #[test]
     fn test_tokenize_append_operator() {
         let tokens = tokenize("echo hello >> out.txt");
         assert_eq!(tokens, vec!["echo", "hello", ">>", "out.txt"]);
     }
-    
+
     #[test]
     fn test_tokenize_stderr_append() {
         let tokens = tokenize("cmd 2>> err.txt");
         assert_eq!(tokens, vec!["cmd", "2>>", "err.txt"]);
     }
-    
+
     #[test]
     fn test_tokenize_mixed_redirects() {
         let tokens = tokenize("cmd > out.txt 2>> err.txt");
         assert_eq!(tokens, vec!["cmd", ">", "out.txt", "2>>", "err.txt"]);
     }
-    
+
     #[test]
     fn test_parse_with_redirects_overwrite() {
         let (tokens, redirects) = parse_with_redirects("echo hello > out.txt 2> err.txt");
         assert_eq!(tokens, vec!["echo", "hello"]);
-        assert_eq!(redirects.stdout, Some(("out.txt".to_string(), RedirectMode::Overwrite)));
-        assert_eq!(redirects.stderr, Some(("err.txt".to_string(), RedirectMode::Overwrite)));
+        assert_eq!(
+            redirects.stdout,
+            Some(("out.txt".to_string(), RedirectMode::Overwrite))
+        );
+        assert_eq!(
+            redirects.stderr,
+            Some(("err.txt".to_string(), RedirectMode::Overwrite))
+        );
     }
-    
+
     #[test]
     fn test_parse_with_redirects_append() {
         let (tokens, redirects) = parse_with_redirects("echo hello >> out.txt 2>> err.txt");
         assert_eq!(tokens, vec!["echo", "hello"]);
-        assert_eq!(redirects.stdout, Some(("out.txt".to_string(), RedirectMode::Append)));
-        assert_eq!(redirects.stderr, Some(("err.txt".to_string(), RedirectMode::Append)));
+        assert_eq!(
+            redirects.stdout,
+            Some(("out.txt".to_string(), RedirectMode::Append))
+        );
+        assert_eq!(
+            redirects.stderr,
+            Some(("err.txt".to_string(), RedirectMode::Append))
+        );
     }
-    
+
     #[test]
     fn test_parse_with_redirects_mixed() {
         let (tokens, redirects) = parse_with_redirects("echo hello > out.txt 2>> err.txt");
         assert_eq!(tokens, vec!["echo", "hello"]);
-        assert_eq!(redirects.stdout, Some(("out.txt".to_string(), RedirectMode::Overwrite)));
-        assert_eq!(redirects.stderr, Some(("err.txt".to_string(), RedirectMode::Append)));
+        assert_eq!(
+            redirects.stdout,
+            Some(("out.txt".to_string(), RedirectMode::Overwrite))
+        );
+        assert_eq!(
+            redirects.stderr,
+            Some(("err.txt".to_string(), RedirectMode::Append))
+        );
     }
-    
+
     #[test]
     fn test_strip_quotes() {
         assert_eq!(strip_quotes("'hello'"), "hello");

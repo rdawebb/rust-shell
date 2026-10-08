@@ -14,24 +14,24 @@ impl IoContext {
             Some((path, RedirectMode::Overwrite)) => Box::new(open_file(path, false)?),
             None => Box::new(io::stdout()),
         };
-        
+
         let stderr: Box<dyn Write> = match &redirects.stderr {
             Some((path, RedirectMode::Append)) => Box::new(open_file(path, true)?),
             Some((path, RedirectMode::Overwrite)) => Box::new(open_file(path, false)?),
             None => Box::new(io::stderr()),
         };
-        
+
         Ok(Self { stdout, stderr })
     }
-    
+
     pub fn write_stdout(&mut self, msg: &str) -> io::Result<()> {
         writeln!(self.stdout, "{}", msg)
     }
-    
+
     pub fn write_stderr(&mut self, msg: &str) -> io::Result<()> {
         writeln!(self.stderr, "{}", msg)
     }
-    
+
     // pub fn stdout(&mut self) -> &mut dyn Write {
     //     &mut *self.stdout
     // }
@@ -99,16 +99,16 @@ pub fn open_file(path: &str, append: bool) -> io::Result<File> {
 mod tests {
     use super::*;
     use std::fs;
-    
+
     #[test]
     fn test_open_file_overwrite() {
         let temp_dir = std::env::temp_dir();
         let test_path = temp_dir.join("test_redirect/output.txt");
-        
+
         let result = open_file(test_path.to_str().unwrap(), false);
         assert!(result.is_ok());
         assert!(test_path.exists());
-        
+
         // Cleanup
         let _ = fs::remove_dir_all(temp_dir.join("test_redirect"));
     }
@@ -117,34 +117,40 @@ mod tests {
     fn test_open_file_append() {
         let temp_dir = std::env::temp_dir();
         let test_path = temp_dir.join("test_append.txt");
-        
+
         // Write first line
         {
             let mut file = open_file(test_path.to_str().unwrap(), false).unwrap();
             writeln!(file, "first").unwrap();
         }
-        
+
         // Append second line
         {
             let mut file = open_file(test_path.to_str().unwrap(), true).unwrap();
             writeln!(file, "second").unwrap();
         }
-        
+
         // Verify both lines exist
         let content = fs::read_to_string(&test_path).unwrap();
         assert_eq!(content, "first\nsecond\n");
-        
+
         // Cleanup
         let _ = fs::remove_file(test_path);
     }
-    
+
     #[test]
     fn test_redirect_mode_enum() {
         let redirects = Redirects::new()
             .with_stdout("out.txt".to_string(), RedirectMode::Append)
             .with_stderr("err.txt".to_string(), RedirectMode::Overwrite);
-        
-        assert_eq!(redirects.stdout, Some(("out.txt".to_string(), RedirectMode::Append)));
-        assert_eq!(redirects.stderr, Some(("err.txt".to_string(), RedirectMode::Overwrite)));
+
+        assert_eq!(
+            redirects.stdout,
+            Some(("out.txt".to_string(), RedirectMode::Append))
+        );
+        assert_eq!(
+            redirects.stderr,
+            Some(("err.txt".to_string(), RedirectMode::Overwrite))
+        );
     }
 }

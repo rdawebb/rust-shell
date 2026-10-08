@@ -13,12 +13,12 @@ pub fn execute(io_ctx: &mut IoContext) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::io_handler::Redirects;
-    
+
     #[test]
     fn test_pwd() {
         let redirects = Redirects::new();
         let mut io_ctx = IoContext::new(&redirects).unwrap();
-        
+
         assert!(execute(&mut io_ctx).is_ok());
     }
 }

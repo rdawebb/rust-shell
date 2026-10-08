@@ -27,7 +27,7 @@ fn find_executable(cmd: &str) -> Option<PathBuf> {
                 } else {
                     env::current_dir().ok()?.join(path)
                 };
-                
+
                 if abs_path.is_file() && is_executable(&abs_path) {
                     Some(abs_path)
                 } else {
@@ -48,12 +48,12 @@ fn is_executable(path: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::io_handler::Redirects;
-    
+
     #[test]
     fn test_type_builtin() {
         let redirects = Redirects::new();
         let mut io_ctx = IoContext::new(&redirects).unwrap();
-        
+
         assert!(execute("echo", &mut io_ctx).is_ok());
     }
 }

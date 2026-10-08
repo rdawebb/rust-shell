@@ -3,12 +3,12 @@ mod command;
 use std::sync::OnceLock;
 
 use command::{builtin_commands, path_commands};
+use rustyline::Result as RustylineResult;
 use rustyline::completion::{Completer, Pair};
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Context, Helper};
-use rustyline::Result as RustylineResult;
 
 static PATH_COMMANDS: OnceLock<Vec<String>> = OnceLock::new();
 
@@ -24,10 +24,8 @@ impl ShellCompleter {
     }
 
     fn get_all_commands(&self) -> Vec<String> {
-        let path_cmds = PATH_COMMANDS.get_or_init(|| {
-            path_commands()
-        });
-        
+        let path_cmds = PATH_COMMANDS.get_or_init(|| path_commands());
+
         let mut all_cmds = self.builtins.clone();
         all_cmds.extend(path_cmds.clone());
         all_cmds.sort();
@@ -51,7 +49,7 @@ impl Validator for ShellCompleter {}
 
 impl Completer for ShellCompleter {
     type Candidate = Pair;
-    
+
     fn complete(
         &self,
         line: &str,
@@ -75,7 +73,7 @@ impl Completer for ShellCompleter {
                 },
             })
             .collect();
-        
+
         Ok((start, matches))
     }
 }
@@ -83,13 +81,13 @@ impl Completer for ShellCompleter {
 /// Extract the word being completed and its start position
 fn extract_word(line: &str, pos: usize) -> (usize, &str) {
     let line_before_cursor = &line[..pos];
-    
+
     // Find the start of the current word
     let start = line_before_cursor
         .rfind(char::is_whitespace)
         .map(|i| i + 1)
         .unwrap_or(0);
-    
+
     let word = &line_before_cursor[start..];
     (start, word)
 }
@@ -97,7 +95,7 @@ fn extract_word(line: &str, pos: usize) -> (usize, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_extract_word() {
         assert_eq!(extract_word("echo", 4), (0, "echo"));

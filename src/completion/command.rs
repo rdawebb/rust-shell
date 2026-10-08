@@ -17,7 +17,7 @@ pub fn builtin_commands() -> Vec<String> {
 /// Get all executables from PATH
 pub fn path_commands() -> Vec<String> {
     let mut commands = Vec::new();
-    
+
     if let Some(path_env) = env::var_os("PATH") {
         for dir in env::split_paths(&path_env) {
             if let Ok(entries) = fs::read_dir(&dir) {
@@ -33,7 +33,7 @@ pub fn path_commands() -> Vec<String> {
             }
         }
     }
-    
+
     // Remove duplicates and sort
     commands.sort();
     commands.dedup();
@@ -49,21 +49,24 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_builtin_commands() {
         let builtins = builtin_commands();
         assert!(builtins.contains(&"echo".to_string()));
         assert!(builtins.contains(&"exit".to_string()));
     }
-    
+
     #[test]
     fn test_path_commands() {
         let commands = path_commands();
         // Should contain common commands
         assert!(commands.contains(&"ls".to_string()));
         // Should not contain duplicates
-        let unique_count = commands.iter().collect::<std::collections::HashSet<_>>().len();
+        let unique_count = commands
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
         assert_eq!(commands.len(), unique_count);
     }
 }
